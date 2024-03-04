@@ -8,6 +8,7 @@ import math
 defaultBoxName = 'BoxWithLid'
 defaultLidThickness = 0.25
 defaultWallWidth = .4
+defaultFloorThickness = 0.2
 defaultTolerance = .04
 defaultBoxLength = 5
 defaultBoxWidth = 4
@@ -52,6 +53,8 @@ class BoxCommandExecuteHandler(adsk.core.CommandEventHandler):
                     boxWithLid.lidThickness = unitsMgr.evaluateExpression(input.expression, "mm")
                 elif input.id == 'wallWidth':
                     boxWithLid.wallWidth = unitsMgr.evaluateExpression(input.expression, "mm")
+                elif input.id == 'floorThickness':
+                    boxWithLid.floorThickness = unitsMgr.evaluateExpression(input.expression, "mm")
                 elif input.id == 'tolerance':
                     boxWithLid.tolerance = unitsMgr.evaluateExpression(input.expression, "mm")
                 elif input.id == 'boxLength':
@@ -118,6 +121,9 @@ class BoxCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             initWallWidth = adsk.core.ValueInput.createByReal(defaultWallWidth)
             inputs.addValueInput('wallWidth', 'Wall Width', 'mm', initWallWidth)
 
+            initFloorThickness = adsk.core.ValueInput.createByReal(defaultFloorThickness)
+            inputs.addValueInput('floorThickness', 'Floor Thickness', 'mm', initFloorThickness)
+
             initTolerance = adsk.core.ValueInput.createByReal(defaultTolerance)
             inputs.addValueInput('tolerance', 'Tolerance', 'mm', initTolerance)
 
@@ -153,6 +159,7 @@ class BoxWithLid:
         self._boxName = defaultBoxName
         self._lidThickness = defaultLidThickness
         self._wallWidth = defaultWallWidth
+        self._floorThickness = defaultFloorThickness
         self._tolerance = defaultTolerance
         self._boxLength = defaultBoxLength
         self._boxWidth = defaultBoxWidth
@@ -184,6 +191,13 @@ class BoxWithLid:
     @wallWidth.setter
     def wallWidth(self, value):
         self._wallWidth = value
+
+    @property
+    def floorThickness(self):
+        return self._floorThickness
+    @floorThickness.setter
+    def floorThickness(self, value):
+        self._floorThickness = value
 
     @property
     def tolerance(self):
@@ -272,22 +286,40 @@ class BoxWithLid:
             extrudes = newComp.features.extrudeFeatures
             prof = baseSketch.profiles[0]
             extInput = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
-            distance = adsk.core.ValueInput.createByReal(self.wallWidth)        # base thickness is just wall width
+            distance = adsk.core.ValueInput.createByReal(self.floorThickness)
             extInput.setDistanceExtent(False, distance)
             baseExt = extrudes.add(extInput)
 
-            # get the front face of this and create the sketch on it
-            #frontFace = baseExt.faces[5]
-            frontFace = newComp.findBRepUsingPoint(adsk.core.Point3D.create(0, -self.boxLength / 2, self.wallWidth / 2), adsk.fusion.BRepEntityTypes.BRepFaceEntityType)[0]
-            #frontFace.body.name = self.boxName
-            ui.messageBox(f'frontFace type: {frontFace.classType()}')
-            frontSketch = sketches.add(frontFace)
+            # get the top face of this and create a new sketch on it
+            # this sketch will create the walls
+            topFace = newComp.findBRepUsingPoint(adsk.core.Point3D.create(0, 0, self.floorThickness), adsk.fusion.BRepEntityTypes.BRepFaceEntityType)[0]
+            #baseExt.body.name = self.boxName
+            topSketch = sketches.add(topFace)
 
+            '''
+            leftLine = getLineFromCoordinates(topSketch, -self.boxWidth / 2, self.boxLength / 2, self.wallWidth, -self.boxWidth / 2, -self.boxLength / 2, self.wallWidth)
+            rightLine = getLineFromCoordinates(topSketch, self.boxWidth / 2, self.boxLength / 2, self.wallWidth, self.boxWidth / 2, -self.boxLength / 2, self.wallWidth)
+            topLine = getLineFromCoordinates(topSketch, -self.boxWidth / 2, self.boxLength / 2, self.wallWidth, self.boxWidth / 2, self.boxLength / 2, self.wallWidth)
+            bottomLine = getLineFromCoordinates(topSketch, -self.boxWidth / 2, -self.boxLength / 2, self.wallWidth, self.boxWidth / 2, -self.boxLength / 2, self.wallWidth)
+            '''
 
+            box = topSketch.sketchCurves.sketchLines.addTwoPointRectangle(
+                adsk.core.Point3D.create(-0.1, -0.1, 0),
+                adsk.core.Point3D.create(0.1, 0.1, 0) 
+            )
+
+            topSketch.sketchDimensions.addDistanceDimension(pointAt(topSketch, -self.boxWidth / 2, self.boxLength / 2, 0), pointAt(topSketch, -0.1, -0.1, 0), 
+                                                            adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation, 
+                                                            adsk.core.Point3D.create(-self.boxWidth / 2, self.boxLength /2 , 0)).value = self.wallWidth
+
+            topSketch.sketchDimensions.addDistanceDimension(pointAt(topSketch, -self.boxWidth / 2, self.boxLength / 2, 0), pointAt(topSketch, -self.boxWidth / 2 + self.wallWidth, 0.1, 0), 
+                                                            adsk.fusion.DimensionOrientations.VerticalDimensionOrientation, 
+                                                            adsk.core.Point3D.create(-self.boxWidth / 2, self.boxLength /2 , 0)).value = self.wallWidth           
 
         except Exception as e:
             if ui:
-                ui.messageBox(f'Failed to complete the box. This is most likely because the input values define an invalid box. Error: {e}')
+                pass
+                #ui.messageBox(f'Failed to complete the box. This is most likely because the input values define an invalid box. Error: {e}')
 
 def run(context):
     try:
@@ -316,3 +348,38 @@ def run(context):
     except:
         if ui:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+
+'''
+def getLineFromCoordinates(sketch, x1, y1, z1, x2, y2, z2):
+    retVal = ((l for l in sketch.sketchCurves.sketchLines if (
+        l.startSketchPoint.geometry.x == x1 and 
+        l.startSketchPoint.geometry.y == y1 and 
+        l.startSketchPoint.geometry.z == z1 and 
+        l.endSketchPoint.geometry.x == x2 and 
+        l.endSketchPoint.geometry.x == y2 and 
+        l.endSketchPoint.geometry.x == z2 
+    ) or (
+        l.endSketchPoint.geometry.x == x1 and 
+        l.endSketchPoint.geometry.y == y1 and 
+        l.endSketchPoint.geometry.z == z1 and 
+        l.startSketchPoint.geometry.x == x2 and 
+        l.startSketchPoint.geometry.x == y2 and 
+        l.startSketchPoint.geometry.x == z2
+    )), None)
+    if retVal == None:
+        ui.messageBox('No valid line found!')
+    return retVal
+'''
+
+def pointAt(sketch, x, y, z):
+    retVal = next((l for l in sketch.sketchPoints if 
+        l.geometry.x == x and 
+        l.geometry.y == y and 
+        l.geometry.z == z
+    ), None)
+
+    if retVal == None:
+        ui.messageBox('No valid point found!')
+    # else:
+    #     ui.messageBox(f'Point found at: ({retVal.geometry.x}, {retVal.geometry.y}, {retVal.geometry.z})')
+    return retVal
